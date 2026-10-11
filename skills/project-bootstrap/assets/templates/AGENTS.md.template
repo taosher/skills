@@ -1,0 +1,48 @@
+# AGENTS.md
+
+{{Project name}}: {{one-line description—what it does and who it is for}}. Current phase: {{initializing / in development / maintaining}}; tasks and status live in `TODOS.md`.
+
+## Iron Rules
+
+1. **Docs first**: for any product feature or major technical decision change, edit `docs/design/tech-design.md` first, then the code. Both may land in the same batch, but within a batch the doc must precede the code—never backfill afterwards. The format of `docs/design/tech-design.md` must not deviate from `docs/template/tech-design-template.md`.
+2. **Single task list `TODOS.md`**: before starting work, write the task into `TODOS.md` and set it `in_progress` (only one globally at a time); mark `done` only after **code is complete and tests pass**. Never announce completion only in conversation without updating the file.
+3. **Language**: technical documentation ({{docs language, default Chinese}}) is written in the docs language; commit messages, identifiers, API names, and **all error messages and logs in code** (error/log/console, event/condition messages, API error responses, CLI runtime output) are written in English. Comments explain "why" in the docs language.
+4. **Comments** explain "why" only, never restate the code; no long chains of reasoning.
+
+## Git and Auto-Commit
+
+- Commit messages: English, conventional commits (`feat|fix|docs|refactor|test|chore|perf|ci|build`), imperative mood, subject ≤72 chars, one commit does one thing.
+- Before committing manually, run: `git status && git diff && git log --oneline -5`.
+- `.opencode/plugins/auto-commit.js` runs `git add -A` (including untracked files, respecting `.gitignore`) on **every session idle** and commits automatically with an LLM-generated message; it commits but never pushes. Therefore:
+  - Check `git status` before manual commits—the hook may already have committed, avoid empty/duplicate commits.
+  - `.gitignore` is the only defense line: secrets, `.env`, `node_modules`, and build artifacts must be confirmed ignored, or the hook will stage them into commits; when adding a new toolchain, add ignore rules before installing dependencies.
+  - `.opencode/` tracks only `plugins/auto-commit.js`; everything else is ignored via `.opencode/.gitignore`.
+
+## Design Docs: Single Source of Truth
+
+- `docs/design/tech-design.md`: the main design (overview, user stories, architecture, API, component design, deployment config, observability, testing, roadmap). Implementation details follow it.
+- {{Optional: `docs/design/<domain>-reference.md`: per-field reference for stable contract surfaces (API fields, config keys, protocols); terminology follows its glossary.}}
+- YAML/JSON examples in the design doc are part of the contract: changing a field name requires updating the examples in the same change, and re-validating all code blocks (run them through `yaml.safe_load_all` / `json.loads`).
+
+## Facts You Must Know Before Implementing
+
+{{Project-specific naming conventions, environment dependencies, external systems, architecture invariants—collected during bootstrap interviews. Example format:}}
+
+- {{Naming/identifier conventions, e.g. "X names carry no prefix while Y names do, to avoid collisions"}};
+- {{Environment facts, e.g. "addresses/ports/topology of dependency service X"}};
+- {{Architecture invariants, e.g. "core computation is a pure function shared by X and Y"}};
+- Build and test commands follow {{root Makefile / package.json scripts / ...}}.
+
+## Common Pitfalls
+
+{{One entry per real pitfall: symptom + how to avoid. Seed with 1–2 generic entries at bootstrap; append continuously as the project evolves.}}
+
+- **Secrets defense line**: `.gitignore` must cover `.env*`, `*.pem`, `*.key`, and `secrets/` before the auto-commit hook goes live;
+- {{First project-specific pitfall}}.
+
+## Repository Layout
+
+- `docs/`: design documentation (docs language): `design/tech-design.md` (single source of truth), `template/tech-design-template.md` (format anchor).
+- {{Source directories}}: {{responsibility}}.
+- `.opencode/`: opencode configuration and plugins (only `plugins/auto-commit.js` is tracked).
+- `TODOS.md`: the single task list.

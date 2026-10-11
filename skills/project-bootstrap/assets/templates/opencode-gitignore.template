@@ -1,0 +1,8 @@
+node_modules
+package.json
+package-lock.json
+bun.lock
+# Ignore opencode local artifacts, but keep this ignore file itself and the plugin directory tracked
+.gitignore
+!.gitignore
+!plugins/

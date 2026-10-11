@@ -1,0 +1,53 @@
+# ===== Generic (keep) =====
+
+# OS and editors
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Secrets and environment (auto-commit relies on this defense line—keep it complete;
+# add rules BEFORE installing new toolchains)
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Logs and temp files
+*.log
+tmp/
+
+# ===== Per tech stack (keep/remove the sections below as needed) =====
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+dist/
+*.tgz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Go
+bin/
+*.test
+*.out
+coverage.out
+
+# Rust
+target/
+
+# Java
+target/
+*.class
+*.jar
+
+# Build artifacts and caches (extend per project)
+# {{...}}

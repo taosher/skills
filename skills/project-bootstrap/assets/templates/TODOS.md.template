@@ -1,0 +1,36 @@
+# TODOS
+
+> Rules (see `AGENTS.md`, Iron Rule 2): only one `in_progress` globally at a time; a task may be marked `done` only after completion and verification. Never announce completion only in conversation without updating this file.
+> Statuses: `todo` / `in_progress` / `done`. Task source: `docs/design/tech-design.md` (single source of truth).
+
+## In Progress
+
+(none)
+
+## Task List
+
+### M0: Workflow skeleton (created by project-bootstrap)
+
+| ID | Task | Status | Verification |
+|---|---|---|---|
+| M0.1 | Create design doc (`docs/design/tech-design.md`) and template (`docs/template/`) | done | Files present |
+| M0.2 | Create `AGENTS.md` (iron rules / facts / pitfall log) and `TODOS.md` | done | Files present |
+| M0.3 | Create `.gitignore` and the auto-commit hook (`.opencode/`) | done | Hook syntax passes; secret files untracked |
+| M0.4 | Fill the remaining "to be designed" sections of the design doc (sections already filled at bootstrap do not count) | todo | No "to be designed" markers left, or explicitly deferred to a later phase |
+
+### M1: {{First milestone name}}
+
+{{Split the first milestone into 3–7 coarse tasks; when work starts, split them down to "one item per single-point feature" and give each a verification standard. Example granularity:}}
+
+| ID | Task | Status | Verification |
+|---|---|---|---|
+| M1.1 | {{Module/feature A}} | todo | {{unit test / integration test / manual verification standard}} |
+| M1.2 | {{Module/feature B}} | todo | {{...}} |
+
+## Open Questions
+
+{{Entries from the "Open Questions" section of the design doc are registered here too (N1, N2, …), or they will be forgotten.}}
+
+| ID | Question | Status | Notes |
+|---|---|---|---|
+| N1 | {{...}} | todo | {{...}} |
