@@ -1,3 +1,7 @@
+import { Plugin } from "@opencode/plugin";
+import { execFile } from "node:child_process";
+import { isAbsolute, resolve as resolvePath } from "node:path";
+
 const INTERNAL_TITLE = "[auto-commit hook] commit message generator";
 const DIFF_BUDGET = 12000;
 const PROMPT_TIMEOUT_MS = 120000;
@@ -5,48 +9,28 @@ const PROMPT_TIMEOUT_MS = 120000;
 let busy = false;
 const internalSessions = new Set();
 
-const MESSAGE_SCHEMA = {
-  type: "object",
-  properties: {
-    subject: {
-      type: "string",
-      description:
-        "Conventional-commit subject line in English, imperative mood, max 72 characters, e.g. 'feat: ...' or 'fix: ...'. No Chinese, no trailing period.",
-    },
-    body: {
-      type: "string",
-      description:
-        "Bullet list in English explaining what changed and why, one bullet per area. No Chinese.",
-    },
-  },
-  required: ["subject", "body"],
-};
-
-function sessionIdOf(event) {
-  const properties = event.properties ?? {};
-  return (
-    properties.sessionID ??
-    properties.sessionId ??
-    properties.id ??
-    properties.info?.id ??
-    null
-  );
+function log(message) {
+  console.error(`[auto-commit] ${message}`);
 }
 
-function collectText(node, out) {
-  if (node == null) return;
-  if (typeof node === "string") return;
-  if (Array.isArray(node)) {
-    for (const item of node) collectText(item, out);
-    return;
-  }
-  if (typeof node === "object") {
-    if (typeof node.text === "string") out.push(node.text);
-    for (const value of Object.values(node)) collectText(value, out);
-  }
+function git(cwd, args) {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", cwd, ...args],
+      { maxBuffer: 20 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const code =
+          error === null || error === undefined
+            ? 0
+            : typeof error.code === "number"
+              ? error.code
+              : 1;
+        resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+      },
+    );
+  });
 }
-
-const BODY_BUDGET = 2000;
 
 function sanitizeSubject(value) {
   return value
@@ -56,41 +40,9 @@ function sanitizeSubject(value) {
     .slice(0, 100);
 }
 
-function fromProseText(joined) {
-  const lines = joined
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return null;
-  const subject = sanitizeSubject(lines[0].replace(/^\{?"subject"\s*:\s*"?/, "").replace(/"?,?\}?$/, ""));
-  if (!subject) return null;
-  const body = lines
-    .slice(1)
-    .join("\n")
-    .replace(/[{}"]/g, "")
-    .trim()
-    .slice(0, BODY_BUDGET);
-  return { subject, body };
-}
-
-function extractMessage(result) {
-  const data = result?.data;
-  const structured =
-    data?.info?.structured_output ?? data?.structured_output ?? null;
-  if (
-    structured &&
-    typeof structured.subject === "string" &&
-    structured.subject.trim()
-  ) {
-    return {
-      subject: sanitizeSubject(structured.subject),
-      body: String(structured.body ?? "").trim(),
-    };
-  }
-  const texts = [];
-  collectText(data, texts);
-  const joined = texts.join("\n");
-  const match = joined.match(/\{[\s\S]*"subject"[\s\S]*\}/);
+function extractMessage(text) {
+  const cleaned = String(text ?? "").replace(/```(?:json)?/gi, "").trim();
+  const match = cleaned.match(/\{[\s\S]*"subject"[\s\S]*\}/);
   if (match) {
     try {
       const parsed = JSON.parse(match[0]);
@@ -101,9 +53,25 @@ function extractMessage(result) {
         };
       }
     } catch {
+      // fall through to prose parsing
     }
   }
-  return fromProseText(joined);
+
+  const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  const subject = sanitizeSubject(
+    lines[0].replace(/^\{?"subject"\s*:\s*"?/, "").replace(/"?,?\}?$/, ""),
+  );
+  if (!subject) return null;
+  return {
+    subject,
+    body: lines
+      .slice(1)
+      .join("\n")
+      .replace(/[{}"]/g, "")
+      .trim()
+      .slice(0, 2000),
+  };
 }
 
 function fallbackMessage(fileCount, stat) {
@@ -116,11 +84,15 @@ function fallbackMessage(fileCount, stat) {
   };
 }
 
-async function generateCommitMessage(client, diff, files) {
-  const created = await client.session.create({ body: { title: INTERNAL_TITLE } });
-  const helperId = created?.data?.id;
+async function generateCommitMessage(ctx, diff, files, target) {
+  const created = await ctx.session.create({
+    title: INTERNAL_TITLE,
+    location: { directory: target },
+  });
+  const helperId = created?.id;
   if (!helperId) throw new Error("failed to create helper session");
   internalSessions.add(helperId);
+
   try {
     const prompt = [
       "You are a commit message generator. Write a commit message for the changes below.",
@@ -138,136 +110,141 @@ async function generateCommitMessage(client, diff, files) {
       "Diff (may be truncated):",
       diff,
     ].join("\n");
-    const result = await client.session.prompt({
-      path: { id: helperId },
-      body: {
-        parts: [{ type: "text", text: prompt }],
-        outputFormat: { type: "json_schema", schema: MESSAGE_SCHEMA },
-      },
-    });
-    if (result?.error) throw new Error(String(result.error));
-    const structuredError = result?.data?.info?.error;
-    if (structuredError) throw new Error(`structured output: ${structuredError.name ?? "error"} ${structuredError.message ?? ""}`.trim());
-    return extractMessage(result);
+
+    const result = await ctx.session.generate({ sessionID: helperId, prompt });
+    return extractMessage(result?.text ?? result?.data?.text ?? "");
   } finally {
     try {
-      await client.session.delete({ path: { id: helperId } });
+      await ctx.session.remove({ sessionID: helperId });
     } catch {
+      // Helper session cleanup must not hide the commit result.
     }
   }
 }
 
-export const AutoCommitPlugin = async ({ $, directory, client }) => {
-  const log = async (level, message) => {
-    try {
-      await client.app.log({
-        body: { service: "auto-commit", level, message },
-      });
-    } catch {
-    }
-  };
-  await log("info", `auto-commit hook loaded (directory=${directory})`);
-  return {
-    event: async ({ event }) => {
-      if (event.type !== "session.idle") return;
-      await log("info", "session.idle received");
-      const sid = sessionIdOf(event);
-      if (sid && internalSessions.has(sid)) {
-        internalSessions.delete(sid);
-        return;
-      }
-      if (busy) {
-        await log("warn", "skip: previous commit flow still running");
-        return;
-      }
-      busy = true;
+function eventLocationDirectory(event) {
+  return event?.location?.directory ?? event?.properties?.location?.directory ?? null;
+}
+
+function absoluteGitPath(base, value) {
+  if (!value) return null;
+  return isAbsolute(value) ? value : resolvePath(base, value);
+}
+
+async function commitIfNeeded(ctx, event) {
+  const sessionID = event?.data?.sessionID ?? event?.properties?.sessionID ?? null;
+  if (sessionID && internalSessions.has(sessionID)) {
+    internalSessions.delete(sessionID);
+    return;
+  }
+  if (busy) {
+    log("skip: previous commit flow still running");
+    return;
+  }
+
+  busy = true;
+  try {
+    let sessionDirectory = eventLocationDirectory(event) ?? ctx.location.directory;
+    if (sessionID) {
       try {
-        const inside = (
-          await $`git -C ${directory} rev-parse --is-inside-work-tree`
-            .quiet()
-            .nothrow()
-            .text()
-        ).trim();
-        if (inside !== "true") {
-          await log("warn", "skip: not inside a git work tree");
-          return;
-        }
-        await $`git -C ${directory} add -A`.quiet().nothrow();
-        const cached = (
-          await $`git -C ${directory} diff --cached --name-only`
-            .quiet()
-            .nothrow()
-            .text()
-        ).trim();
-        const files = cached
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        if (files.length === 0) {
-          await log("info", "skip: no staged changes");
-          return;
-        }
-        let diff = (
-          await $`git -C ${directory} diff --cached`.quiet().nothrow().text()
-        ).trim();
-        if (diff.length > DIFF_BUDGET) {
-          diff = `${diff.slice(0, DIFF_BUDGET)}\n... [truncated]`;
-        }
-        const stat = (
-          await $`git -C ${directory} diff --cached --shortstat`
-            .quiet()
-            .nothrow()
-            .text()
-        ).trim();
-        let message = null;
-        try {
-          message = await Promise.race([
-            generateCommitMessage(client, diff, files),
-            new Promise((_, reject) =>
-              setTimeout(
-                () => reject(new Error("commit message timeout")),
-                PROMPT_TIMEOUT_MS,
-              ),
-            ),
-          ]);
-          if (message) {
-            await log("info", `auto-commit: message generated: ${message.subject}`);
-          } else {
-            await log("warn", "auto-commit: prompt returned no usable text, using fallback");
-          }
-        } catch (error) {
-          await log(
-            "warn",
-            `auto-commit: LLM message generation failed, using fallback: ${String(error)}`,
-          );
-          message = null;
-        }
-        const finalMessage = message ?? fallbackMessage(files.length, stat);
-        const footer =
-          "Generated by opencode auto-commit hook; commit only, no push.";
-        const body = finalMessage.body
-          ? `${finalMessage.body}\n\n${footer}`
-          : footer;
-        const commitResult =
-          await $`git -C ${directory} commit -m ${finalMessage.subject} -m ${body}`
-            .quiet()
-            .nothrow();
-        if (commitResult.exitCode !== 0) {
-          await log(
-            "error",
-            `auto-commit: git commit failed (exit ${commitResult.exitCode}): ${(commitResult.text() || "").trim().slice(0, 500)}`,
-          );
-        } else {
-          await log(
-            "info",
-            `auto-commit: committed ${files.length} file(s): ${finalMessage.subject}`,
-          );
-        }
-      } catch (error) {
-        await log("error", `auto-commit: flow failed: ${String(error)}`);
-      } finally {
-        busy = false;
+        const info = await ctx.session.get({ sessionID });
+        sessionDirectory = info?.location?.directory ?? sessionDirectory;
+      } catch {
+        // Fall back to the event/plugin location.
       }
-    },
-  };
-};
+    }
+
+    const inside = (await git(sessionDirectory, ["rev-parse", "--is-inside-work-tree"])).stdout.trim();
+    if (inside !== "true") {
+      log(`skip: ${sessionDirectory} is not inside a git work tree`);
+      return;
+    }
+
+    const target = (await git(sessionDirectory, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    if (!target) {
+      log(`skip: cannot resolve work tree root for ${sessionDirectory}`);
+      return;
+    }
+
+    const targetCommon = absoluteGitPath(
+      target,
+      (await git(target, ["rev-parse", "--git-common-dir"])).stdout.trim(),
+    );
+    const baseCommon = absoluteGitPath(
+      ctx.location.directory,
+      (await git(ctx.location.directory, ["rev-parse", "--git-common-dir"])).stdout.trim(),
+    );
+    if (targetCommon && baseCommon && targetCommon !== baseCommon) {
+      log(`skip: ${target} belongs to a different repository`);
+      return;
+    }
+
+    log(`target: ${target}`);
+    await git(target, ["add", "-A"]);
+    const files = (await git(target, ["diff", "--cached", "--name-only"]))
+      .stdout.split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (files.length === 0) {
+      log("skip: no staged changes");
+      return;
+    }
+
+    let diff = (await git(target, ["diff", "--cached"])).stdout.trim();
+    if (diff.length > DIFF_BUDGET) diff = `${diff.slice(0, DIFF_BUDGET)}\n... [truncated]`;
+    const stat = (await git(target, ["diff", "--cached", "--shortstat"])).stdout.trim();
+
+    let message = null;
+    try {
+      message = await Promise.race([
+        generateCommitMessage(ctx, diff, files, target),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("commit message timeout")), PROMPT_TIMEOUT_MS),
+        ),
+      ]);
+      if (message) log(`message generated: ${message.subject}`);
+      else log("prompt returned no usable text, using fallback");
+    } catch (error) {
+      log(`LLM message generation failed, using fallback: ${String(error)}`);
+    }
+
+    const finalMessage = message ?? fallbackMessage(files.length, stat);
+    const footer = "Generated by opencode auto-commit hook; commit only, no push.";
+    const body = finalMessage.body ? `${finalMessage.body}\n\n${footer}` : footer;
+    const commit = await git(target, [
+      "commit",
+      "-m",
+      finalMessage.subject,
+      "-m",
+      body,
+    ]);
+    if (commit.code !== 0) {
+      log(`git commit failed (exit ${commit.code}): ${commit.stderr.trim().slice(0, 500)}`);
+    } else {
+      log(`committed ${files.length} file(s): ${finalMessage.subject}`);
+    }
+  } catch (error) {
+    log(`flow failed: ${String(error)}`);
+  } finally {
+    busy = false;
+  }
+}
+
+export default Plugin.define({
+  id: "monavi.auto-commit",
+  setup(ctx) {
+    log(`hook loaded (directory=${ctx.location.directory})`);
+    const controller = new AbortController();
+    void (async () => {
+      for await (const event of ctx.event.subscribe({
+        types: ["session.idle"],
+        signal: controller.signal,
+      })) {
+        await commitIfNeeded(ctx, event);
+      }
+    })().catch((error) => {
+      if (!controller.signal.aborted) log(`event subscription failed: ${String(error)}`);
+    });
+    return () => controller.abort();
+  },
+});
