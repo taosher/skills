@@ -5,12 +5,37 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 const INTERNAL_TITLE = "[auto-commit hook] commit message generator";
 const DIFF_BUDGET = 12000;
 const PROMPT_TIMEOUT_MS = 120000;
+const IDLE_DEBOUNCE_MS = 1000;
+// The server can load the same plugin for multiple locations. Keep locks on
+// globalThis so those instances dedupe the same idle event.
+const SHARED_STATE = Symbol.for("oc.auto-commit.state");
 
-let busy = false;
-const internalSessions = new Set();
+function shared() {
+  let state = globalThis[SHARED_STATE];
+  if (!state || typeof state !== "object") {
+    state = {};
+    globalThis[SHARED_STATE] = state;
+  }
+  // Hot reload keeps globalThis alive across module versions, so migrate the
+  // shape instead of assuming a fresh process.
+  if (!(state.busyRepos instanceof Set)) state.busyRepos = new Set();
+  if (!(state.internalSessions instanceof Set)) state.internalSessions = new Set();
+  if (!(state.lastHandled instanceof Map)) state.lastHandled = new Map();
+  return state;
+}
 
 function log(message) {
   console.error(`[auto-commit] ${message}`);
+}
+
+function debug(message) {
+  if (process.env.OC_AUTO_COMMIT_DEBUG === "1") log(message);
+}
+
+function sameProject(a, b) {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  return Boolean(a.canonical && b.canonical && a.canonical === b.canonical);
 }
 
 function git(cwd, args) {
@@ -91,7 +116,7 @@ async function generateCommitMessage(ctx, diff, files, target) {
   });
   const helperId = created?.id;
   if (!helperId) throw new Error("failed to create helper session");
-  internalSessions.add(helperId);
+  shared().internalSessions.add(helperId);
 
   try {
     const prompt = [
@@ -133,36 +158,45 @@ function absoluteGitPath(base, value) {
 
 async function commitIfNeeded(ctx, event) {
   const sessionID = event?.data?.sessionID ?? event?.properties?.sessionID ?? null;
-  if (sessionID && internalSessions.has(sessionID)) {
-    internalSessions.delete(sessionID);
-    return;
-  }
-  if (busy) {
-    log("skip: previous commit flow still running");
-    return;
-  }
+  const state = shared();
+  if (sessionID && state.internalSessions.has(sessionID)) return;
 
-  busy = true;
-  try {
-    let sessionDirectory = eventLocationDirectory(event) ?? ctx.location.directory;
-    if (sessionID) {
-      try {
-        const info = await ctx.session.get({ sessionID });
-        sessionDirectory = info?.location?.directory ?? sessionDirectory;
-      } catch {
-        // Fall back to the event/plugin location.
-      }
+  let sessionDirectory = eventLocationDirectory(event) ?? ctx.location.directory;
+  let sessionProject = null;
+  if (sessionID) {
+    try {
+      const info = await ctx.session.get({ sessionID });
+      sessionDirectory = info?.location?.directory ?? sessionDirectory;
+      sessionProject = info?.location?.project ?? null;
+    } catch {
+      // The session may already be gone; there is nothing to commit.
+      return;
     }
+  }
 
+  // The event stream is server-wide. Ignore sessions from other projects
+  // before touching their working tree.
+  if (sessionProject && ctx.location.project && !sameProject(sessionProject, ctx.location.project)) {
+    return;
+  }
+
+  const now = Date.now();
+  if (sessionID) {
+    const last = state.lastHandled.get(sessionID) ?? 0;
+    if (now - last < IDLE_DEBOUNCE_MS) return;
+  }
+
+  let target = null;
+  try {
     const inside = (await git(sessionDirectory, ["rev-parse", "--is-inside-work-tree"])).stdout.trim();
     if (inside !== "true") {
-      log(`skip: ${sessionDirectory} is not inside a git work tree`);
+      debug(`skip: ${sessionDirectory} is not inside a git work tree`);
       return;
     }
 
-    const target = (await git(sessionDirectory, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    target = (await git(sessionDirectory, ["rev-parse", "--show-toplevel"])).stdout.trim();
     if (!target) {
-      log(`skip: cannot resolve work tree root for ${sessionDirectory}`);
+      debug(`skip: cannot resolve work tree root for ${sessionDirectory}`);
       return;
     }
 
@@ -175,18 +209,25 @@ async function commitIfNeeded(ctx, event) {
       (await git(ctx.location.directory, ["rev-parse", "--git-common-dir"])).stdout.trim(),
     );
     if (targetCommon && baseCommon && targetCommon !== baseCommon) {
-      log(`skip: ${target} belongs to a different repository`);
+      debug(`skip: ${target} belongs to a different repository`);
       return;
     }
 
-    log(`target: ${target}`);
+    if (state.busyRepos?.has(target)) {
+      debug(`skip: ${target} is already being committed`);
+      return;
+    }
+    if (sessionID) state.lastHandled.set(sessionID, now);
+    state.busyRepos.add(target);
+
+    debug(`target: ${target}`);
     await git(target, ["add", "-A"]);
     const files = (await git(target, ["diff", "--cached", "--name-only"]))
       .stdout.split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
     if (files.length === 0) {
-      log("skip: no staged changes");
+      debug("skip: no staged changes");
       return;
     }
 
@@ -202,8 +243,8 @@ async function commitIfNeeded(ctx, event) {
           setTimeout(() => reject(new Error("commit message timeout")), PROMPT_TIMEOUT_MS),
         ),
       ]);
-      if (message) log(`message generated: ${message.subject}`);
-      else log("prompt returned no usable text, using fallback");
+      if (message) debug(`message generated: ${message.subject}`);
+      else debug("prompt returned no usable text, using fallback");
     } catch (error) {
       log(`LLM message generation failed, using fallback: ${String(error)}`);
     }
@@ -226,21 +267,26 @@ async function commitIfNeeded(ctx, event) {
   } catch (error) {
     log(`flow failed: ${String(error)}`);
   } finally {
-    busy = false;
+    if (target) state.busyRepos?.delete(target);
   }
 }
 
 export default Plugin.define({
-  id: "monavi.auto-commit",
+  id: "oc.auto-commit",
   setup(ctx) {
-    log(`hook loaded (directory=${ctx.location.directory})`);
+    debug(`hook loaded (directory=${ctx.location.directory})`);
     const controller = new AbortController();
     void (async () => {
       for await (const event of ctx.event.subscribe({
         types: ["session.idle"],
         signal: controller.signal,
       })) {
-        await commitIfNeeded(ctx, event);
+        try {
+          await commitIfNeeded(ctx, event);
+        } catch (error) {
+          // One bad event must not kill the subscription for the process.
+          log(`event handling failed: ${String(error)}`);
+        }
       }
     })().catch((error) => {
       if (!controller.signal.aborted) log(`event subscription failed: ${String(error)}`);
