@@ -15,7 +15,7 @@
 |---|---|---|---|
 | M0.1 | Create design doc (`docs/design/tech-design.md`) and template (`docs/template/`) | done | Files present |
 | M0.2 | Create `AGENTS.md` (iron rules / facts / pitfall log) and `TODOS.md` | done | Files present |
-| M0.3 | Create `.gitignore` and the auto-commit hook (`.opencode/`) | done | Hook syntax passes; secret files untracked |
+| M0.3 | Create `.gitignore` | done | Files present; secret files untracked |
 | M0.4 | Fill the remaining "to be designed" sections of the design doc (sections already filled at bootstrap do not count) | todo | No "to be designed" markers left, or explicitly deferred to a later phase |
 
 ### M1: {{First milestone name}}
