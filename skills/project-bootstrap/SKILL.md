@@ -1,6 +1,6 @@
 ---
 name: project-bootstrap
-description: Bootstrap a new project with a docs-first, TODO-driven AI collaboration workflow. Creates AGENTS.md (living project conventions), a design document (tech-design template), TODOS.md (single task list with verification columns), .gitignore, and the opencode auto-commit hook, all filled with best-practice initial content. Use this skill whenever the user wants to initialize or scaffold a new project or repository, set up project conventions or rules for AI-assisted development, create AGENTS.md or CLAUDE.md, establish a design-doc-first workflow, set up TODO tracking, configure auto-commit hooks, or says things like "set up the project properly", "bootstrap this repo", "start a new project", "initialize the project", "follow best practices for vibe coding", or asks for a good AI collaboration workflow. Also use when a repo lacks AGENTS.md, TODOS.md, or design docs and the user wants to establish the workflow.
+description: Bootstrap a new project with a docs-first, TODO-driven AI collaboration workflow. Creates AGENTS.md (living project conventions), a design document (tech-design template), TODOS.md (single task list with verification columns), and .gitignore, all filled with best-practice initial content. Use this skill whenever the user wants to initialize or scaffold a new project or repository, set up project conventions or rules for AI-assisted development, create AGENTS.md or CLAUDE.md, establish a design-doc-first workflow, set up TODO tracking, or says things like "set up the project properly", "bootstrap this repo", "start a new project", "initialize the project", "follow best practices for vibe coding", or asks for a good AI collaboration workflow. Also use when a repo lacks AGENTS.md, TODOS.md, or design docs and the user wants to establish the workflow.
 ---
 
 # Project Bootstrap: Initializing the Project Workflow Skeleton
@@ -11,18 +11,15 @@ Goal: turn a project from an empty directory into "workflow-ready" in a single i
 - **AGENTS.md** (living project conventions): iron rules, facts, and a pitfall log—so the AI does not drift during long-running collaboration;
 - **TODOS.md** (single task list): every task is a single-point item with a verification column; completion requires evidence.
 
-Plus the **auto-commit hook** (commits automatically whenever an AI session goes idle, with an LLM-generated commit message), so change history accumulates naturally.
-
 ## Dependencies and Fallbacks (self-contained declaration)
 
-The core capabilities of this skill (templates, scripts, hook code) are fully self-contained in `assets/` and `scripts/`, with **no hard dependency on network or MCP**. The following are optional enhancements with automatic fallbacks:
+The core capabilities of this skill (templates and scripts) are fully self-contained in `assets/` and `scripts/`, with **no hard dependency on network or MCP**. The following are optional enhancements with automatic fallbacks:
 
 | Dependency | Purpose | Fallback when missing |
 |---|---|---|
 | `grilling` / `grill-me` skill (external, optional) | Design interrogation in Step 2 | Use the built-in question list in Step 2 |
 | `humanizer-zh` / `humanizer` skill (external, optional) | De-AI-flavor polish for Chinese docs | Skip polishing; self-check against the language conventions |
-| `git` (required) | Version control and auto-commit | None (run `git init` first) |
-| `node` (ships with opencode) | Running the auto-commit plugin | Skip hook installation; advise manual commits |
+| `git` (required) | Version control | None (run `git init` first) |
 | Other skills / MCP | No dependency | — |
 
 ## Process Overview
@@ -31,14 +28,14 @@ The core capabilities of this skill (templates, scripts, hook code) are fully se
 flowchart TD
     S0["Step 0 Preflight<br/>git repo / new project or existing code"] --> S1["Step 1 Ask once<br/>name, goal, language, first milestone, roles"]
     S1 --> S2["Step 2 Design interrogation<br/>problem / users / boundaries / alternatives / failure modes"]
-    S2 --> S3["Step 3 Create workflow files<br/>design doc + AGENTS.md + TODOS.md + .gitignore + hook"]
-    S3 --> S4["Step 4 Verify<br/>files present / hook syntax / ignore rules effective"]
+    S2 --> S3["Step 3 Create workflow files<br/>design doc + AGENTS.md + TODOS.md + .gitignore"]
+    S3 --> S4["Step 4 Verify<br/>files present / ignore rules effective"]
     S4 --> S5["Step 5 Handoff<br/>daily loop explained + first task"]
 ```
 
 ## Step 0: Preflight
 
-1. Confirm the working directory and project root; if not inside a git repository, run `git init` first (the auto-commit hook depends on git).
+1. Confirm the working directory and project root; if not inside a git repository, run `git init` first.
 2. Determine the project shape:
    - **New project** (empty or freshly initialized): create everything in the standard flow;
    - **Existing code, no workflow docs**: create everything in the standard flow too, but add one task to TODOS.md: "**Documentation-vs-reality gap analysis**"—backfill the Overview/Architecture/Components sections of the design doc against the actual code, so docs and reality never diverge.
@@ -76,9 +73,7 @@ Create each item below in order. **All templates live in `assets/templates/`** a
 | 2 | `docs/design/tech-design.md` | same template | Fill Overview, User Story, Design Goals / Capability Boundaries; put interrogation conclusions under Alternatives; keep the template's placeholder comments for sections not yet designed (do not invent content) |
 | 3 | `AGENTS.md` | `assets/templates/AGENTS.md.template` | Fill in the project name and one-liner; "Facts you must know" gets the constraints from Step 1; seed the pitfall log with 1–2 generic entries (e.g. "secrets never enter the repo"); one entry per real pitfall after that |
 | 4 | `TODOS.md` | `assets/templates/TODOS.md.template` | Initial tasks = this skill's M0 (workflow files created; mark done when finished) + the first milestone as 3–7 coarse tasks (split finer later) |
-| 5 | `.gitignore` | `assets/templates/gitignore.template` | Keep the generic section; extend per tech stack (the template has section guidance); **secrets and env files must be covered**—this is the only defense line for auto-commit |
-| 6 | `.opencode/plugins/auto-commit.js` | `assets/templates/auto-commit.js` | Copy verbatim (a self-contained opencode plugin) |
-| 7 | `.opencode/.gitignore` | `assets/templates/opencode-gitignore.template` | Copy verbatim (ignores opencode local artifacts; `!.gitignore` and `!plugins/` keep the ignore file itself and the plugin tracked—without them a fresh clone loses the ignore rules) |
+| 5 | `.gitignore` | `assets/templates/gitignore.template` | Keep the generic section; extend per tech stack (the template has section guidance); **secrets and env files must be covered** |
 
 Details per file:
 
@@ -92,7 +87,7 @@ Details per file:
 
 1. **First line**: project name + one-liner + current phase (one sentence is enough);
 2. **Iron rules**: see the template—docs first / single TODO list / language conventions / comments explain "why" only. **Do not trim these**—they are the constitution of the whole workflow;
-3. **Git and auto-commit**: commit message conventions + hook behavior + the `.gitignore` defense-line reminder;
+3. **Git**: commit message conventions + the `.gitignore` secrets defense line;
 4. **Single source of truth**: where the design doc lives and the requirement to validate examples (examples are part of the contract);
 5. **Facts you must know before implementing**: project-specific naming/environment/architecture constraints—the **pitfall write-back zone**, appended continuously as the project evolves;
 6. **Common pitfalls**: one entry per real pitfall, written as "symptom + how to avoid".
@@ -104,15 +99,9 @@ Details per file:
 - Granularity: one item per single-point feature (e.g. do not write "implement the user module"; write "user registration endpoint / password hashing / email verification / login endpoint" as separate items);
 - Open questions go into the list too (separate section), or they will be forgotten.
 
-### The auto-commit hook
-
-- Behavior: on every opencode **session idle**, it runs `git add -A` → collects the diff → uses an internal LLM session to generate a conventional-commit message → commits (**commit only, never push**); on generation failure it falls back to a default message without blocking;
-- Depends on: the opencode runtime (`$`, `client`, session API) + git; no external packages;
-- After installing, remind the user: **`.gitignore` is the only defense line against secrets entering the repo**—the hook stages untracked files automatically, so `.env`, keys, and build artifacts must be confirmed ignored first.
-
 ## Step 4: Verify
 
-Run the bundled script (checks file presence, hook syntax, and key `.gitignore` coverage):
+Run the bundled script (checks file presence and key `.gitignore` coverage):
 
 ```bash
 bash scripts/verify-setup.sh <project-root>

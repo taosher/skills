@@ -7,7 +7,7 @@
 .idea/
 .vscode/
 
-# Secrets and environment (auto-commit relies on this defense line—keep it complete;
+# Secrets and environment (keep this defense line complete;
 # add rules BEFORE installing new toolchains)
 .env
 .env.*

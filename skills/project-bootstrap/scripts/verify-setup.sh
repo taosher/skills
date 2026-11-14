@@ -25,22 +25,6 @@ check "docs/design/tech-design.md" test -f docs/design/tech-design.md
 check "AGENTS.md" test -f AGENTS.md
 check "TODOS.md" test -f TODOS.md
 check ".gitignore" test -f .gitignore
-check ".opencode/plugins/auto-commit.js" test -f .opencode/plugins/auto-commit.js
-check ".opencode/.gitignore" test -f .opencode/.gitignore
-
-echo "== Hook syntax (node --check) =="
-if command -v node >/dev/null 2>&1; then
-  # The file is ESM (uses export); use stdin + --input-type=module to avoid CJS mis-parsing on older node.
-  if node --input-type=module --check < .opencode/plugins/auto-commit.js >/dev/null 2>&1; then
-    echo "✓ auto-commit.js syntax (ESM)"
-    PASS=$((PASS + 1))
-  else
-    echo "✗ auto-commit.js syntax (ESM)"
-    FAIL=$((FAIL + 1))
-  fi
-else
-  echo "· skipped (no node): auto-commit.js syntax"
-fi
 
 echo "== Git status and ignore defense line =="
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
